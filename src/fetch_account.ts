@@ -15,7 +15,7 @@ const testConnection = new Connection(
 
 // Conexión privada a Mainnet
 const devConnection = new Connection(
-  "https://mainnet.helius-rpc.com/?api-key=7b25bdb2-5930-4d54-b65f-9a8061130ecd",
+  RPC_URL,
   "confirmed"
 );
 
