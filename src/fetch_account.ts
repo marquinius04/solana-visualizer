@@ -1,7 +1,4 @@
 import { Connection, PublicKey } from "@solana/web3.js";
-import type { GetProgramAccountsFilter } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import { connection } from "./api/solana.ts";
 import 'dotenv/config';
 
 // Intenta leer de Vite y, si falla, lee de Node.js
