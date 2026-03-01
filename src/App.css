@@ -22,7 +22,8 @@ body {
 /* Contenedor principal */
 .dashboard {
   width: 100%;
-  max-width: 1000px; /* Mantiene el contenido agrupado en el centro */
+  max-width: 1000px;
+  /* Mantiene el contenido agrupado en el centro */
   padding: 60px 20px;
   display: flex;
   flex-direction: column;
@@ -34,6 +35,7 @@ body {
   font-weight: 800;
   background: linear-gradient(90deg, #00f2ff, #76b900);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 50px;
   text-align: center;
@@ -68,7 +70,8 @@ body {
 /* Cajas de fondo para cada sección */
 .section {
   width: 100%;
-  background: rgba(20, 22, 30, 0.6); /* Fondo oscuro semitransparente */
+  background: rgba(20, 22, 30, 0.6);
+  /* Fondo oscuro semitransparente */
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 24px;
   padding: 40px 20px;
@@ -102,6 +105,10 @@ body {
   height: 160px;
   border-radius: 50%;
   background: #15171e;
+  background-size: cover;
+  background-position: center;
+  /* Image stops at the inner edge of the border — no bleeding into the ring */
+  background-clip: padding-box;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -111,53 +118,146 @@ body {
   position: relative;
 }
 
+/* Dark overlay — fades on hover to reveal the image, but never fully transparent
+   so text stays legible over any logo/color */
+.bubble::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(21, 23, 30, 0.82);
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* On hover: partial reveal — image visible but overlay stays at 35% so text is readable */
+.bubble:hover::before {
+  opacity: 0.35;
+}
+
+/* Text always above the overlay with a strong shadow for legibility over any image */
+.bubble>* {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95), 0 0 16px rgba(0, 0, 0, 0.8);
+}
+
 .bubble:hover {
   transform: translateY(-5px) scale(1.05);
 }
 
+/* Token ring — clean border with no bleeding thanks to background-clip: padding-box */
 .bubble.token {
   border: 2px solid rgba(0, 242, 255, 0.3);
   box-shadow: 0 0 20px rgba(0, 242, 255, 0.1);
 }
+
 .bubble.token:hover {
-  box-shadow: 0 0 30px rgba(0, 242, 255, 0.4);
   border-color: #00f2ff;
+  box-shadow: 0 0 30px rgba(0, 242, 255, 0.4);
 }
 
 .bubble.profit {
   border: 2px solid rgba(76, 175, 80, 0.3);
   box-shadow: 0 0 20px rgba(76, 175, 80, 0.1);
 }
+
 .bubble.profit:hover {
-  box-shadow: 0 0 30px rgba(76, 175, 80, 0.4);
   border-color: #4caf50;
+  box-shadow: 0 0 30px rgba(76, 175, 80, 0.4);
 }
 
 .bubble.loss {
   border: 2px solid rgba(244, 67, 54, 0.3);
   box-shadow: 0 0 20px rgba(244, 67, 54, 0.1);
 }
+
 .bubble.loss:hover {
-  box-shadow: 0 0 30px rgba(244, 67, 54, 0.4);
   border-color: #f44336;
+  box-shadow: 0 0 30px rgba(244, 67, 54, 0.4);
 }
 
-.bubble-asset {
-  font-size: 1.2rem;
+/* ===== PERPETUAL BUBBLES — overflow:hidden to clip the detail panel ===== */
+
+/* Clip the animated detail panel to the circle */
+.bubble.perp {
+  overflow: hidden;
+}
+
+/* Ticker name: the biggest element, instant read */
+.perp-ticker {
+  font-size: 1.25rem;
   font-weight: 800;
-  margin-bottom: 5px;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+  line-height: 1;
 }
 
-.bubble-size {
-  font-size: 0.9rem;
-  color: #a0aec0;
+/* Direction badge: ▲ LONG 10x / ▼ SHORT 10x — colored to match PnL */
+.perp-direction {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  opacity: 0.9;
+  margin-bottom: 4px;
+}
+
+/* PnL: the visual hero — larger and bold so the key info lands immediately */
+.perp-pnl {
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+/* Details row — hidden by default, slides up on hover */
+.perp-details {
+  position: absolute;
+  bottom: 18px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: none;
+}
+
+.bubble.perp:hover .perp-details {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Shift the main content slightly upward on hover to make room for details */
+.bubble.perp:hover .perp-ticker,
+.bubble.perp:hover .perp-direction,
+.bubble.perp:hover .perp-pnl {
+  transform: translateY(-8px);
+  transition: transform 0.3s ease;
+}
+
+.perp-ticker,
+.perp-direction,
+.perp-pnl {
+  transition: transform 0.3s ease;
 }
 
 .bubble-pnl {
-  font-size: 1rem;
-  font-weight: bold;
-  margin-top: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
-.text-profit { color: #4caf50; }
-.text-loss { color: #f44336; }
+.text-profit {
+  color: #4caf50;
+}
+
+.text-loss {
+  color: #f44336;
+}

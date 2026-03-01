@@ -1,67 +1,70 @@
-import { Connection, PublicKey } from "@solana/web3.js";
+/**
+ * src/fetch_account.ts
+ *
+ * DEV-ONLY utility script — NOT imported anywhere in the app bundle.
+ * Run manually with: npx ts-node src/fetch_account.ts <walletAddress>
+ *
+ * SECURITY: API key is read from the HELIUS_API_KEY env var (server-side).
+ * No wallet address is hardcoded — pass it as a CLI argument.
+ */
+import { Connection } from "@solana/web3.js";
 import 'dotenv/config';
 
-// Intenta leer de Vite y, si falla, lee de Node.js
-const RPC_URL = import.meta.env?.VITE_HELIUS_RPC || process.env.VITE_HELIUS_RPC;
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
+if (!HELIUS_API_KEY) {
+  console.error("Error: HELIUS_API_KEY not found in environment variables.");
+  process.exit(1);
+}
 
-// Conexión red de testeo
-const testConnection = new Connection(
-  "https://api.devnet.solana.com",
-  "confirmed"
-);
+const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 
-// Conexión privada a Mainnet
-const devConnection = new Connection(
-  RPC_URL,
-  "confirmed"
-);
+// Connection to devnet for testing (no API key needed)
+const testConnection = new Connection("https://api.devnet.solana.com", "confirmed");
+void testConnection; // used for manual devnet testing
 
-// Dirección de cartera personal
-const myWalletAddress = new PublicKey(
-  "ATQ5CKLYGVLGSzaKxW3pR3n1vsH2Xa3dP3abgFBqLmZ5"
-);
+// Wallet address comes from CLI argument — never hardcoded
+const walletAddress = process.argv[2];
+if (!walletAddress) {
+  console.error("Usage: npx ts-node src/fetch_account.ts <walletAddress>");
+  process.exit(1);
+}
 
 const getTokensOwned = async (): Promise<any> => {
-  const optionsAssets = {
+  const response = await fetch(RPC_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       jsonrpc: '2.0',
-      id: 'busqueda_total',
+      id: 'dev-query',
       method: 'getAssetsByOwner',
       params: {
-        ownerAddress: myWalletAddress.toString(),
+        ownerAddress: walletAddress,
         options: {
           showFungible: true,
-          showNativeBalance: true
-        }
-      }
-    })
-  };
+          showNativeBalance: true,
+        },
+      },
+    }),
+  });
 
-  const response = await fetch(RPC_URL, optionsAssets);
   const { result } = await response.json();
 
   const tokenData = result.items
     .filter((asset: any) => asset.token_info?.balance > 0)
     .map((asset: any) => {
-      // Calculamos balance real con decimales
       const balance = asset.token_info.balance / Math.pow(10, asset.token_info.decimals || 0);
-      // Precio por unidad
       const price = asset.token_info.price_info?.price_per_token || 0;
-
       return {
         name: asset.content.metadata?.name || 'N/A',
         symbol: asset.content.metadata?.symbol || 'N/A',
-        balance: balance,
+        balance,
         price_usd: price.toFixed(6),
         total_value_usd: (balance * price).toFixed(2),
-        mint: asset.id
+        mint: asset.id,
       };
     });
 
   console.table(tokenData);
-  
   return tokenData;
 };
 

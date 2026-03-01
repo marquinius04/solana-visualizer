@@ -1,55 +1,70 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import '../App.css';
 
 // ============================================================================
-// 1. LÓGICA DE DATOS (Intacta)
+// SECURITY NOTES:
+//  - This component NEVER calls Helius or Hyperliquid directly.
+//  - All external API calls go through serverless proxies in /api/*.
+//  - The HELIUS_API_KEY and HL_WALLET_ADDRESS only exist on the server side.
+//  - Phantom is used strictly for read-only wallet connection (publicKey only).
+//    No private keys, secret keys, or mnemonics are ever accessed here.
 // ============================================================================
 
+// ============================================================================
+// 1. DATA FETCHING (via secure backend proxies)
+// ============================================================================
+
+/**
+ * Fetches the Solana token balances for the given wallet address.
+ * Calls /api/tokens (proxy) so the Helius API key is never exposed to the browser.
+ */
 const cargarMisTokens = async (walletAddress: string) => {
   try {
-    const response = await fetch(import.meta.env.VITE_HELIUS_RPC, {
+    const response = await fetch('/api/tokens', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'visor-web',
-        method: 'getAssetsByOwner',
-        params: {
-          ownerAddress: walletAddress,
-          options: { showFungible: true, showNativeBalance: true, showUnverifiedCollections: true }
-        }
-      })
+      body: JSON.stringify({ walletAddress }),
     });
 
-    const { result } = await response.json();
-    const listaFinal = [];
+    if (!response.ok) {
+      throw new Error(`Proxy error: ${response.status}`);
+    }
 
-    // 1. CAPTURAMOS TU SOL NATIVO y le asignamos su logo oficial
+    const { result } = await response.json();
+    const listaFinal: any[] = [];
+
+    // 1. Native SOL balance
     if (result.nativeBalance && result.nativeBalance.lamports > 0) {
       listaFinal.push({
         symbol: 'SOL',
         balance: result.nativeBalance.lamports / 10 ** 9,
         mint: 'native',
-        imageUrl: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+        imageUrl:
+          'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
       });
     }
 
-    // 2. CAPTURAMOS LOS TOKENS y extraemos la URL de la imagen (links.image)
+    // 2. SPL tokens with a positive balance
     const tokens = (result.items || [])
       .filter((asset: any) => asset.token_info?.balance > 0)
       .map((asset: any) => ({
         symbol: asset.content.metadata?.symbol || 'N/A',
-        balance: asset.token_info.balance / Math.pow(10, asset.token_info.decimals || 0),
+        balance:
+          asset.token_info.balance /
+          Math.pow(10, asset.token_info.decimals || 0),
         mint: asset.id,
-        imageUrl: asset.content?.links?.image || asset.content?.files?.[0]?.uri || null
+        imageUrl:
+          asset.content?.links?.image ||
+          asset.content?.files?.[0]?.uri ||
+          null,
       }));
 
     listaFinal.push(...tokens);
 
-    // 3. FILTRO DE LIMPIEZA
-    const tokensLimpios = listaFinal.filter(t => {
-      if (t.symbol === 'SOL') return true; 
-      return t.balance >= 0.01; 
+    // 3. Dust filter — show SOL always, hide SPL tokens below 0.01
+    const tokensLimpios = listaFinal.filter((t) => {
+      if (t.symbol === 'SOL') return true;
+      return t.balance >= 0.01;
     });
 
     if (tokensLimpios.length === 0) {
@@ -58,69 +73,43 @@ const cargarMisTokens = async (walletAddress: string) => {
 
     return tokensLimpios;
   } catch (error) {
-    console.error("Error cargando Solana:", error);
+    console.error('Error cargando Solana:', error);
     return [{ symbol: 'Error', balance: 0, mint: 'error', imageUrl: null }];
   }
 };
 
-const cargarTodoHyperliquid = async (userAddress: string) => {
+/**
+ * Fetches open Hyperliquid perp positions.
+ * The wallet address is read from HL_WALLET_ADDRESS env var on the server —
+ * never sent from or exposed to the browser.
+ */
+const cargarTodoHyperliquid = async () => {
   try {
-    // 1. Ejecutamos las dos peticiones en paralelo (DEX estándar y DEX xyz)
-    const [estadoNormalResp, estadoXyzResp] = await Promise.all([
-      fetch('https://api.hyperliquid.xyz/info', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: "clearinghouseState", user: userAddress.toLowerCase() })
-      }),
-      fetch('https://api.hyperliquid.xyz/info', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: "clearinghouseState", user: userAddress.toLowerCase(), dex: "xyz" })
-      })
-    ]);
-    
-    // 2. Convertimos las respuestas a formato JSON
-    const estadoNormal = await estadoNormalResp.json();
-    const estadoXyz = await estadoXyzResp.json();
+    const response = await fetch('/api/hyperliquid', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
 
-    // 3. Unificamos todas las posiciones en un único array
-    const todasLasPosiciones = [
-      ...(estadoNormal.assetPositions || []),
-      ...(estadoXyz.assetPositions || [])
-    ];
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      // If the server says HL_WALLET_ADDRESS is not configured, return empty array silently
+      if (response.status === 500) {
+        console.warn('[Hyperliquid] Server not configured:', body.error);
+        return [];
+      }
+      throw new Error(`Proxy error: ${response.status}`);
+    }
 
-    console.log(todasLasPosiciones);
-
-    // 4. Filtramos y estructuramos los datos
-    const posicionesProcesadas = todasLasPosiciones
-      .filter((p: any) => parseFloat(p.position.szi) !== 0) // Descartamos posiciones cerradas (tamaño 0)
-      .map((p: any) => {
-        const assetName = p.position.coin; 
-        const size = parseFloat(p.position.szi);
-        console.log(assetName);
-
-        return {
-          asset: assetName, 
-          side: size > 0 ? "LONG" : "SHORT",
-          investedMoney: parseFloat(p.position.marginUsed),
-          totalValue: parseFloat(p.position.positionValue),
-          entry: parseFloat(p.position.entryPx),
-          pnl: parseFloat(p.position.unrealizedPnl),
-          leverage: p.position.leverage.value,
-          // Construimos la URL de la imagen concatenando el nombre del activo exacto
-          imageUrl: `https://app.hyperliquid.xyz/coins/${assetName}.svg`
-        };
-      });
-
-    return posicionesProcesadas;
+    const { positions } = await response.json();
+    return positions ?? [];
   } catch (error) {
-    console.error("Error en Hyperliquid:", error);
+    console.error('Error en Hyperliquid:', error);
     return [];
   }
 };
 
 // ============================================================================
-// 2. INTERFAZ VISUAL (La Magia CSS)
+// 2. UI COMPONENT
 // ============================================================================
 
 export function WalletPortfolio() {
@@ -128,81 +117,150 @@ export function WalletPortfolio() {
   const [tokens, setTokens] = useState<any[]>([]);
   const [trades, setTrades] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  // True only during the silent auto-reconnect attempt on first paint
+  const [connecting, setConnecting] = useState(true);
 
+  /**
+   * Shared helper — loads all data for a given publicKey.
+   * Called both on manual connect and on silent auto-reconnect.
+   */
+  const cargarDatos = async (publicKey: string) => {
+    setLoading(true);
+    const [solTokens, hlTrades] = await Promise.all([
+      cargarMisTokens(publicKey),
+      cargarTodoHyperliquid(),
+    ]);
+    setTokens(solTokens);
+    setTrades(hlTrades);
+    setLoading(false);
+  };
+
+  /**
+   * SILENT AUTO-RECONNECT on mount.
+   *
+   * Uses onlyIfTrusted: true — Phantom reconnects automatically ONLY if the
+   * user previously approved this site. No popup, no interaction needed.
+   *
+   * SECURITY: The wallet address is NEVER stored in localStorage, sessionStorage,
+   * or cookies. The trust state lives inside the Phantom extension, not in the app.
+   * This eliminates any XSS risk of a stored address being stolen.
+   */
+  useEffect(() => {
+    const intentarReconexion = async () => {
+      const provider = (window as any).solana;
+      if (!provider?.isPhantom) {
+        setConnecting(false);
+        return;
+      }
+      try {
+        // This resolves instantly if trusted, throws if not — no popup ever shown.
+        const response = await provider.connect({ onlyIfTrusted: true });
+        const publicKey: string = response.publicKey.toString();
+        setAddress(publicKey);
+        await cargarDatos(publicKey);
+      } catch {
+        // Not previously trusted or Phantom not available — show connect button.
+      } finally {
+        setConnecting(false);
+      }
+    };
+    intentarReconexion();
+  }, []);
+
+  /**
+   * Manual connect — called when the user clicks "Connect Wallet".
+   * Uses onlyIfTrusted: false so Phantom shows the approval popup if needed.
+   * READ-ONLY: only publicKey is accessed. No private keys or signing.
+   */
   const conectarYBuscar = async () => {
     const provider = (window as any).solana;
 
-    if (provider?.isPhantom) {
-      setLoading(true);
-      const response = await provider.connect();
-      const publicKey = response.publicKey.toString();
+    if (!provider?.isPhantom) {
+      alert('Instala Phantom Wallet.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await provider.connect({ onlyIfTrusted: false });
+      const publicKey: string = response.publicKey.toString();
       setAddress(publicKey);
-
-      const solTokens = await cargarMisTokens(publicKey);
-      setTokens(solTokens);
-
-      const misTrades = await cargarTodoHyperliquid("0x96CF8b6DCEe734e24009367C51137a574953f354");
-      setTrades(misTrades);
+      await cargarDatos(publicKey);
+    } catch (error) {
+      console.error('Error al conectar wallet:', error);
+      alert('No se pudo conectar. Revisa la consola para más detalles.');
+    } finally {
       setLoading(false);
-    } else {
-      alert("Instala Phantom Wallet.");
     }
   };
+
+  // While the silent reconnect attempt is in progress, render nothing to avoid
+  // a flash of the connect button before Phantom responds.
+  if (connecting) {
+    return (
+      <div className="dashboard">
+        <h1 className="title">Millogangster Club</h1>
+        <p style={{ color: 'var(--text-dim, #aaa)', marginTop: '2rem' }}>Conectando...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard">
       <h1 className="title">Millogangster Club</h1>
-      
+
       {!address ? (
-        <button className="connect-btn" onClick={conectarYBuscar}>
-          {loading ? "Conectando..." : "Connect Wallet"}
+        <button className="connect-btn" onClick={conectarYBuscar} disabled={loading}>
+          {loading ? 'Conectando...' : 'Connect Wallet'}
         </button>
       ) : (
         <div className="sections-container">
-          
-          {/* SECCIÓN SOLANA (Tokens normales) */}
+
+          {/* SOLANA — Token balances */}
           <div className="section">
             <h3 className="section-title">Solana Wallet</h3>
             <div className="bubble-grid">
-              {tokens.length > 0 ? tokens.map((t, i) => (
-                <div 
-                  key={`token-${i}`} 
-                  className="bubble token"
-                  style={t.imageUrl ? {
-                    backgroundImage: `linear-gradient(rgba(21, 23, 30, 0.7), rgba(21, 23, 30, 0.9)), url(${t.imageUrl})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center'
-                  } : {}}
-                >
-                  <div className="bubble-asset">{t.symbol}</div>
-                  <div className="bubble-size">{t.balance.toFixed(4)}</div>
-                </div>
-              )) : <p>Buscando activos...</p>}
+              {tokens.length > 0 ? (
+                tokens.map((t, i) => (
+                  <div
+                    key={`token-${i}`}
+                    className="bubble token"
+                    style={t.imageUrl ? { backgroundImage: `url(${t.imageUrl})` } : {}}
+                  >
+                    <div className="bubble-asset">{t.symbol}</div>
+                    <div className="bubble-size">{t.balance.toFixed(4)}</div>
+                  </div>
+                ))
+              ) : (
+                <p>Buscando activos...</p>
+              )}
             </div>
           </div>
 
-          {/* SECCIÓN HYPERLIQUID (Tus Perpetuos) */}
+          {/* HYPERLIQUID — Open perpetual positions */}
           {trades.length > 0 && (
             <div className="section">
               <h3 className="section-title">Open Positions (Perps)</h3>
               <div className="bubble-grid">
                 {trades.map((s, i) => (
-                  <div 
-                    key={i} 
-                    className={`bubble ${s.pnl >= 0 ? 'profit' : 'loss'}`}
-                    style={{
-                      // Añadimos un degradado oscuro encima de la imagen para que el texto siga siendo legible
-                      backgroundImage: `linear-gradient(rgba(21, 23, 30, 0.8), rgba(21, 23, 30, 0.95)), url(${s.imageUrl})`,
-                      backgroundSize: 'cover',
-                      backgroundPosition: 'center'
-                    }}
+                  <div
+                    key={`trade-${i}`}
+                    className={`bubble perp ${s.pnl >= 0 ? 'profit' : 'loss'}`}
+                    style={{ backgroundImage: `url(${s.imageUrl})` }}
                   >
-                    {/* s.asset.replace('xyz:', '') limpia el prefijo para la interfaz */}
-                    <strong>{s.asset.replace('xyz:', '')} ({s.leverage}x)</strong>: {s.investedMoney.toFixed(2)}$
-                    <br/>
-                    Entry: ${s.entry.toFixed(2)}
-                    <br/>
-                    <small>PnL: ${s.pnl.toFixed(2)}</small>
+                    {/* Default state */}
+                    <div className="perp-ticker">{s.asset.replace('xyz:', '')}</div>
+                    <div className={`perp-direction ${s.pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+                      {s.side === 'LONG' ? '▲' : '▼'} {s.side} {s.leverage}x
+                    </div>
+                    <div className={`perp-pnl ${s.pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+                      {s.pnl >= 0 ? '+' : ''}{s.pnl.toFixed(2)}$
+                    </div>
+
+                    {/* Hover state — slides up */}
+                    <div className="perp-details">
+                      <span>{s.investedMoney.toFixed(2)}$</span>
+                    </div>
                   </div>
                 ))}
               </div>
