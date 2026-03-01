@@ -80,8 +80,7 @@ const cargarMisTokens = async (walletAddress: string) => {
 
 /**
  * Fetches open Hyperliquid perp positions.
- * The wallet address is read from HL_WALLET_ADDRESS env var on the server —
- * never sent from or exposed to the browser.
+ * The wallet address is read from HL_WALLET_ADDRESS env var on the server.
  */
 const cargarTodoHyperliquid = async () => {
   try {
@@ -92,7 +91,6 @@ const cargarTodoHyperliquid = async () => {
 
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      // If the server says HL_WALLET_ADDRESS is not configured, return empty array silently
       if (response.status === 500) {
         console.warn('[Hyperliquid] Server not configured:', body.error);
         return [];
@@ -108,6 +106,31 @@ const cargarTodoHyperliquid = async () => {
   }
 };
 
+/**
+ * Fetches Kamino Finance lending deposits.
+ * SOL_WALLET_ADDRESS is read from server-side env — not sent from the browser.
+ * Nothing identifying appears in the Network tab.
+ */
+const cargarKamino = async () => {
+  try {
+    const response = await fetch('/api/kamino', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      console.warn('[Kamino] Proxy error:', response.status);
+      return [];
+    }
+
+    const { positions } = await response.json();
+    return positions ?? [];
+  } catch (error) {
+    console.error('Error en Kamino:', error);
+    return [];
+  }
+};
+
 // ============================================================================
 // 2. UI COMPONENT
 // ============================================================================
@@ -116,22 +139,23 @@ export function WalletPortfolio() {
   const [address, setAddress] = useState<string | null>(null);
   const [tokens, setTokens] = useState<any[]>([]);
   const [trades, setTrades] = useState<any[]>([]);
+  const [kaminoPositions, setKaminoPositions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  // True only during the silent auto-reconnect attempt on first paint
   const [connecting, setConnecting] = useState(true);
 
   /**
    * Shared helper — loads all data for a given publicKey.
-   * Called both on manual connect and on silent auto-reconnect.
    */
   const cargarDatos = async (publicKey: string) => {
     setLoading(true);
-    const [solTokens, hlTrades] = await Promise.all([
+    const [solTokens, hlTrades, kamino] = await Promise.all([
       cargarMisTokens(publicKey),
       cargarTodoHyperliquid(),
+      cargarKamino(),
     ]);
     setTokens(solTokens);
     setTrades(hlTrades);
+    setKaminoPositions(kamino);
     setLoading(false);
   };
 
@@ -261,6 +285,25 @@ export function WalletPortfolio() {
                     <div className="perp-details">
                       <span>{s.investedMoney.toFixed(2)}$</span>
                     </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* KAMINO FINANCE — Lending deposits (e.g. JitoSOL) */}
+          {kaminoPositions.length > 0 && (
+            <div className="section">
+              <h3 className="section-title">Kamino Lending</h3>
+              <div className="bubble-grid">
+                {kaminoPositions.map((p, i) => (
+                  <div
+                    key={`kamino-${i}`}
+                    className="bubble token"
+                    style={p.imageUrl ? { backgroundImage: `url(${p.imageUrl})` } : {}}
+                  >
+                    <div className="bubble-asset">{p.symbol}</div>
+                    <div className="bubble-size">{p.amount.toFixed(4)}</div>
                   </div>
                 ))}
               </div>
